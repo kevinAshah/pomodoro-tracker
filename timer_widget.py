@@ -1,3 +1,8 @@
+"""
+Pomodoro Timer Widget - Clean Dark UI
+Fixed: Using Label widgets for buttons (reliable on macOS)
+"""
+
 import tkinter as tk
 from tkinter import ttk
 import threading
@@ -14,8 +19,16 @@ class PomodoroTimer:
     PAUSED = "paused"
     BREAK = "break"
     
-    WIDGET_WIDTH = 140
-    WIDGET_HEIGHT = 120
+    # Compact square dimensions
+    WIDGET_WIDTH = 120
+    WIDGET_HEIGHT = 85
+    
+    # Colors
+    BG = '#0d0d0d'
+    BG_LIGHT = '#1a1a1a'
+    BG_HOVER = '#2a2a2a'
+    FG = '#ffffff'
+    FG_DIM = '#888888'
     
     def __init__(self):
         self.root = tk.Tk()
@@ -27,7 +40,6 @@ class PomodoroTimer:
         self.state = self.IDLE
         self.session_start_time = None
         
-        # Load 5 fixed segments
         self.segments = get_segments()
         self.current_segment_idx = 0
         
@@ -37,430 +49,381 @@ class PomodoroTimer:
         
         self.timer_thread = None
         self.running = True
-        
-        # Ensure widget stays on top periodically
         self._keep_on_top()
         
     def _setup_window(self):
-        """Configure window properties for floating behavior."""
-        # Remove window decorations to create custom title bar
+        """Configure window properties."""
         self.root.overrideredirect(True)
-        
-        # Always on top - CRITICAL for floating widget
         self.root.attributes('-topmost', True)
-        
-        # Prevent window from losing focus (stays on top always)
         self.root.lift()
-        self.root.attributes('-topmost', 1)
-        
-        # Transparency
         self.root.attributes('-alpha', 0.96)
-        
-        # Pure black background
-        self.root.configure(bg='#000000')
-        
-        # Fixed size
+        self.root.configure(bg=self.BG)
         self.root.geometry(f"{self.WIDGET_WIDTH}x{self.WIDGET_HEIGHT}")
         self.root.resizable(False, False)
         
-        # Make window draggable
         self.root.bind('<Button-1>', self._start_drag)
         self.root.bind('<B1-Motion>', self._drag)
-        
-        # Ensure it stays on top even after other windows are clicked
         self.root.bind('<FocusOut>', lambda e: self.root.lift())
         
     def _position_window(self):
-        """Position window at bottom-right corner."""
+        """Position at bottom-right corner."""
         self.root.update_idletasks()
-        
-        # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        
-        # Position at bottom-right with padding
         x = screen_width - self.WIDGET_WIDTH - 20
         y = screen_height - self.WIDGET_HEIGHT - 80
-        
         self.root.geometry(f"{self.WIDGET_WIDTH}x{self.WIDGET_HEIGHT}+{x}+{y}")
+    
+    def _make_label_button(self, parent, text, command, width=3, bg=None, fg=None, font=None):
+        """Create a Label that acts as a button (works on macOS without white bg)."""
+        bg = bg or self.BG_LIGHT
+        fg = fg or self.FG
+        font = font or ('SF Mono', 12)
+        
+        label = tk.Label(
+            parent,
+            text=text,
+            font=font,
+            fg=fg,
+            bg=bg,
+            width=width,
+            cursor='hand2'
+        )
+        
+        # Store original bg for hover
+        label._original_bg = bg
+        
+        # Hover effects
+        def on_enter(e):
+            label.config(bg=self.BG_HOVER)
+        def on_leave(e):
+            label.config(bg=label._original_bg)
+        def on_click(e):
+            command()
+            
+        label.bind('<Enter>', on_enter)
+        label.bind('<Leave>', on_leave)
+        label.bind('<Button-1>', on_click)
+        
+        return label
         
     def _create_widgets(self):
-        """Create the ultra-minimal UI elements."""
-        # Main container
-        self.main_frame = tk.Frame(self.root, bg='#000000')
-        self.main_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        """Create the UI - 2 column layout matching wireframe."""
+        # Main container - 2 columns side by side
+        self.main_frame = tk.Frame(self.root, bg=self.BG)
+        self.main_frame.pack(fill='both', expand=True, padx=6, pady=4)
         
-        # Custom title bar with traffic lights
-        title_bar = tk.Frame(self.main_frame, bg='#000000', height=18)
-        title_bar.pack(fill='x', pady=(0, 5))
-        title_bar.pack_propagate(False)
+        # === LEFT COLUMN: Traffic lights, Timer, Segment ===
+        left_col = tk.Frame(self.main_frame, bg=self.BG)
+        left_col.pack(side='left', fill='both', expand=True)
         
-        # Traffic lights (left side)
-        traffic_frame = tk.Frame(title_bar, bg='#000000')
-        traffic_frame.pack(side='left')
+        # Traffic lights (top of left column)
+        traffic_frame = tk.Frame(left_col, bg=self.BG)
+        traffic_frame.pack(anchor='w', pady=(0, 0))
         
-        # Close button (red)
-        close_btn = tk.Button(
-            traffic_frame,
-            text="●",
-            command=self._quit,
-            font=('Arial', 9),
-            bg='#000000',
-            fg='#ff5f56',
-            activebackground='#000000',
-            activeforeground='#ff5f56',
-            bd=0,
-            cursor='hand2',
-            padx=0,
-            pady=0,
-            highlightthickness=0,
-            relief='flat'
-        )
-        close_btn.pack(side='left', padx=1)
+        # Close button (red circle)
+        self.close_canvas = tk.Canvas(traffic_frame, width=14, height=14, bg=self.BG, highlightthickness=0)
+        self.close_canvas.pack(side='left', padx=(0, 3))
+        self.close_dot = self.close_canvas.create_oval(2, 2, 12, 12, fill='#ff5f56', outline='')
+        self.close_canvas.bind('<Button-1>', lambda e: self._quit())
+        self.close_canvas.bind('<Enter>', lambda e: self.close_canvas.itemconfig(self.close_dot, fill='#ff3b30'))
+        self.close_canvas.bind('<Leave>', lambda e: self.close_canvas.itemconfig(self.close_dot, fill='#ff5f56'))
+        self.close_canvas.config(cursor='hand2')
         
-        # Minimize button (yellow)
-        minimize_btn = tk.Button(
-            traffic_frame,
-            text="●",
-            command=self._minimize,
-            font=('Arial', 9),
-            bg='#000000',
-            fg='#ffbd2e',
-            activebackground='#000000',
-            activeforeground='#ffbd2e',
-            bd=0,
-            cursor='hand2',
-            padx=0,
-            pady=0,
-            highlightthickness=0,
-            relief='flat'
-        )
-        minimize_btn.pack(side='left', padx=1)
+        # Minimize button (yellow circle)
+        self.min_canvas = tk.Canvas(traffic_frame, width=14, height=14, bg=self.BG, highlightthickness=0)
+        self.min_canvas.pack(side='left')
+        self.min_dot = self.min_canvas.create_oval(2, 2, 12, 12, fill='#ffbd2e', outline='')
+        self.min_canvas.bind('<Button-1>', lambda e: self._minimize())
+        self.min_canvas.bind('<Enter>', lambda e: self.min_canvas.itemconfig(self.min_dot, fill='#ff9500'))
+        self.min_canvas.bind('<Leave>', lambda e: self.min_canvas.itemconfig(self.min_dot, fill='#ffbd2e'))
+        self.min_canvas.config(cursor='hand2')
         
-        # Timer section with controls
-        timer_frame = tk.Frame(self.main_frame, bg='#000000')
-        timer_frame.pack(fill='x', pady=(0, 8))
-        
-        # Timer display (left side)
+        # Timer display (middle of left column)
         self.time_label = tk.Label(
-            timer_frame,
+            left_col,
             text="25:00",
-            font=('SF Mono', 28, 'bold'),
-            fg='#ffffff',
-            bg='#000000'
+            font=('SF Mono', 26, 'bold'),
+            fg=self.FG,
+            bg=self.BG
         )
-        self.time_label.pack(side='left')
+        self.time_label.pack(anchor='w', pady=(2, 2))
         
-        # Control buttons (right side, stacked)
-        controls_frame = tk.Frame(timer_frame, bg='#000000')
-        controls_frame.pack(side='right', padx=(5, 0))
-        
-        btn_style = {
-            'font': ('SF Mono', 11),
-            'bg': '#1a1a1a',
-            'fg': '#ffffff',
-            'activebackground': '#2a2a2a',
-            'activeforeground': '#ffffff',
-            'bd': 0,
-            'width': 2,
-            'height': 1,
-            'cursor': 'hand2',
-            'highlightthickness': 0,
-            'relief': 'flat'
-        }
-        
-        # Play/Pause button (top)
-        self.play_btn = tk.Button(controls_frame, text="▶", command=self._toggle_timer, **btn_style)
-        self.play_btn.pack(pady=(0, 2))
-        
-        # Reset button (bottom)
-        self.reset_btn = tk.Button(controls_frame, text="⏹", command=self._reset_timer, **btn_style)
-        self.reset_btn.pack()
-        
-        # Segment selector with dashboard icon (no label, just color + dropdown + icon)
-        seg_frame = tk.Frame(self.main_frame, bg='#000000')
-        seg_frame.pack(fill='x', pady=(0, 3))
+        # Segment row (bottom of left column)
+        segment_frame = tk.Frame(left_col, bg=self.BG)
+        segment_frame.pack(anchor='w', fill='x')
         
         # Color indicator
-        self.color_canvas = tk.Canvas(
-            seg_frame,
-            width=10,
-            height=10,
-            bg='#000000',
-            highlightthickness=0
-        )
-        self.color_canvas.pack(side='left', padx=(0, 5))
-        self.color_dot = self.color_canvas.create_oval(
-            1, 1, 9, 9, 
-            fill=self.segments[0]['color'] if self.segments else '#666666'
-        )
+        self.color_canvas = tk.Canvas(segment_frame, width=10, height=10, bg=self.BG, highlightthickness=0)
+        self.color_canvas.pack(side='left', padx=(0, 4))
+        initial_color = self.segments[0]['color'] if self.segments else '#666666'
+        self.color_dot = self.color_canvas.create_oval(1, 1, 9, 9, fill=initial_color, outline='')
         
         # Segment dropdown
         self.segment_var = tk.StringVar(value=self.segments[0]['name'] if self.segments else "")
         
-        # Style the combobox for pure dark mode
         style = ttk.Style()
         style.theme_use('default')
-        
-        # Configure combobox colors
-        style.configure(
-            'Dark.TCombobox',
-            fieldbackground='#1a1a1a',
-            background='#1a1a1a',
-            foreground='#ffffff',
-            arrowcolor='#ffffff',
-            borderwidth=0,
-            relief='flat'
+        style.configure('Dark.TCombobox',
+            fieldbackground=self.BG_LIGHT,
+            background=self.BG_LIGHT,
+            foreground=self.FG,
+            arrowcolor='#666666',
+            borderwidth=0
         )
-        
-        # Map for dropdown list colors
         style.map('Dark.TCombobox',
-            fieldbackground=[('readonly', '#1a1a1a')],
-            selectbackground=[('readonly', '#2a2a2a')],
-            selectforeground=[('readonly', '#ffffff')]
+            fieldbackground=[('readonly', self.BG_LIGHT)],
+            selectbackground=[('readonly', self.BG_HOVER)],
+            selectforeground=[('readonly', self.FG)]
         )
+        
+        self.root.option_add('*TCombobox*Listbox.background', self.BG_LIGHT)
+        self.root.option_add('*TCombobox*Listbox.foreground', self.FG)
+        self.root.option_add('*TCombobox*Listbox.selectBackground', '#333333')
+        self.root.option_add('*TCombobox*Listbox.selectForeground', self.FG)
         
         self.segment_dropdown = ttk.Combobox(
-            seg_frame,
+            segment_frame,
             textvariable=self.segment_var,
             values=[s['name'] for s in self.segments],
             state='readonly',
-            width=8,
+            width=7,
             style='Dark.TCombobox',
             font=('SF Pro', 10)
         )
-        self.segment_dropdown.pack(side='left', fill='x', expand=True, padx=(0, 5))
+        self.segment_dropdown.pack(side='left')
         self.segment_dropdown.bind('<<ComboboxSelected>>', self._on_segment_change)
         
-        # Dashboard button (right side of segment dropdown, smaller)
-        self.dash_btn = tk.Button(
-            seg_frame,
+        # === RIGHT COLUMN: 3 buttons stacked vertically ===
+        right_col = tk.Frame(self.main_frame, bg=self.BG)
+        right_col.pack(side='right', fill='y', padx=(4, 0))
+        
+        # Play/Pause button (top)
+        self.play_btn = self._make_label_button(
+            right_col, 
+            text="▶", 
+            command=self._toggle_timer,
+            width=2
+        )
+        self.play_btn.pack(pady=(0, 3))
+        
+        # Reset/Stop button (middle)
+        self.reset_btn = self._make_label_button(
+            right_col,
+            text="⏹",
+            command=self._reset_timer,
+            width=2
+        )
+        self.reset_btn.pack(pady=(0, 3))
+        
+        # Dashboard button (bottom)
+        self.dash_btn = self._make_label_button(
+            right_col,
             text="📈",
             command=self._open_dashboard,
-            font=('SF Mono', 10),
-            bg='#000000',
-            fg='#ffffff',
-            activebackground='#000000',
-            activeforeground='#888888',
-            bd=0,
-            cursor='hand2',
-            padx=0,
-            pady=0,
-            highlightthickness=0,
-            relief='flat'
+            width=2,
+            font=('', 11)
         )
-        self.dash_btn.pack(side='right')
+        self.dash_btn.pack()
         
     def _on_segment_change(self, event=None):
-        """Handle segment selection change."""
+        """Handle segment change."""
         selected = self.segment_var.get()
         for i, seg in enumerate(self.segments):
             if seg['name'] == selected:
                 self.current_segment_idx = i
-                # Update color indicator
                 self.color_canvas.itemconfig(self.color_dot, fill=seg['color'])
                 break
                 
     def _toggle_timer(self):
-        """Toggle timer start/pause."""
+        """Toggle start/pause."""
         if self.state == self.IDLE:
             self._start_timer()
         elif self.state == self.RUNNING:
             self._pause_timer()
         elif self.state == self.PAUSED:
-            self._start_timer()
+            self._resume_timer()
         elif self.state == self.BREAK:
             self._pause_timer()
             
     def _start_timer(self):
-        """Start or resume the timer."""
-        if self.state == self.IDLE:
-            self.session_start_time = datetime.now()
-            self.time_remaining = self.work_duration
-        elif self.state == self.BREAK:
-            # Resuming break
-            pass
-            
-        self.state = self.RUNNING if self.state != self.BREAK else self.BREAK
+        """Start timer."""
+        # Stop any existing timer loop first
+        self.state = self.IDLE
+        time.sleep(0.1)  # Give existing thread time to exit
         
-        # Update button to pause icon
+        self.session_start_time = datetime.now()
+        self.time_remaining = self.work_duration
+        self.state = self.RUNNING
+        self.play_btn.config(text="⏸")
+        self.time_label.config(fg=self.FG)  # White for work
+        
+        # Only start new thread if none is running
+        if self.timer_thread is None or not self.timer_thread.is_alive():
+            self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
+            self.timer_thread.start()
+        
+    def _pause_timer(self):
+        """Pause timer."""
+        self.state = self.PAUSED
+        self.play_btn.config(text="▶")
+        
+    def _resume_timer(self):
+        """Resume timer."""
+        self.state = self.RUNNING
         self.play_btn.config(text="⏸")
         
         if self.timer_thread is None or not self.timer_thread.is_alive():
             self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
             self.timer_thread.start()
-            
-    def _pause_timer(self):
-        """Pause the timer."""
-        if self.state == self.RUNNING or self.state == self.BREAK:
-            self.state = self.PAUSED
-            self.play_btn.config(text="▶")
-            
+        
     def _reset_timer(self):
-        """Reset the timer (does NOT save the cycle)."""
+        """Reset timer."""
         self.state = self.IDLE
         self.time_remaining = self.work_duration
         self.session_start_time = None
         self._update_time_display()
         self.play_btn.config(text="▶")
+        self.time_label.config(fg=self.FG)
         
     def _timer_loop(self):
-        """Background timer loop."""
+        """Background timer."""
         while self.running:
-            if self.state == self.RUNNING:
+            if self.state == self.RUNNING or self.state == self.BREAK:
                 if self.time_remaining > 0:
                     self.time_remaining -= 1
                     self.root.after(0, self._update_time_display)
                 else:
-                    self.root.after(0, self._timer_complete)
+                    if self.state == self.RUNNING:
+                        self.root.after(0, self._timer_complete)
+                    else:
+                        self.root.after(0, self._break_complete)
                     return
-            elif self.state == self.BREAK:
-                if self.time_remaining > 0:
-                    self.time_remaining -= 1
-                    self.root.after(0, self._update_time_display)
-                else:
-                    self.root.after(0, self._break_complete)
-                    return
-            time.sleep(1)
+                time.sleep(1)
+            elif self.state == self.IDLE or self.state == self.PAUSED:
+                # Exit thread when idle or paused - will be restarted when needed
+                return
+            else:
+                time.sleep(0.1)
             
     def _timer_complete(self):
-        """Handle work timer completion."""
+        """Work timer done."""
         self.state = self.IDLE
         self._play_notification_sound()
         self._show_completion_dialog()
         
     def _break_complete(self):
-        """Handle break timer completion."""
+        """Break timer done."""
         self.state = self.IDLE
         self._play_notification_sound()
         self._notify("Break's over!", "Ready for another pomodoro?")
         self._reset_timer()
         
     def _show_completion_dialog(self):
-        """Show minimal dialog to log the completed session."""
+        """Show completion dialog."""
         dialog = tk.Toplevel(self.root)
-        dialog.title("🍅 Pomodoro Complete!")
-        dialog.configure(bg='#0a0a0a')
+        dialog.title("Complete!")
+        dialog.configure(bg=self.BG)
         dialog.attributes('-topmost', True)
-        dialog.geometry("380x180")
+        dialog.geometry("340x160")
         dialog.resizable(False, False)
+        # Don't use overrideredirect on macOS - causes focus issues
+        # dialog.overrideredirect(True)
         
-        # Center the dialog
+        # Center
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 380) // 2
-        y = (dialog.winfo_screenheight() - 180) // 2
+        x = (dialog.winfo_screenwidth() - 340) // 2
+        y = (dialog.winfo_screenheight() - 160) // 2
         dialog.geometry(f"+{x}+{y}")
+        
+        # Force focus to this dialog
+        dialog.focus_force()
+        dialog.grab_set()
+        
+        # Border effect
+        border = tk.Frame(dialog, bg='#333333')
+        border.pack(fill='both', expand=True, padx=1, pady=1)
+        
+        inner = tk.Frame(border, bg=self.BG)
+        inner.pack(fill='both', expand=True)
         
         # Title
         tk.Label(
-            dialog,
-            text="🍅 Great work! What did you do?",
-            font=('SF Pro', 13, 'bold'),
-            fg='#ffffff',
-            bg='#0a0a0a'
-        ).pack(pady=(15, 5))
+            inner, text="🍅 What did you accomplish?",
+            font=('SF Pro', 13, 'bold'), fg=self.FG, bg=self.BG
+        ).pack(pady=(15, 8))
         
-        # Segment display with color
+        # Segment
         segment = self.segments[self.current_segment_idx]
-        seg_frame = tk.Frame(dialog, bg='#0a0a0a')
-        seg_frame.pack(pady=5)
+        seg_frame = tk.Frame(inner, bg=self.BG)
+        seg_frame.pack(pady=(0, 8))
         
-        color_canvas = tk.Canvas(seg_frame, width=12, height=12, bg='#0a0a0a', highlightthickness=0)
-        color_canvas.pack(side='left', padx=(0, 5))
-        color_canvas.create_oval(2, 2, 10, 10, fill=segment['color'])
+        dot = tk.Canvas(seg_frame, width=10, height=10, bg=self.BG, highlightthickness=0)
+        dot.pack(side='left', padx=(0, 5))
+        dot.create_oval(1, 1, 9, 9, fill=segment['color'])
         
-        tk.Label(
-            seg_frame,
-            text=segment['name'],
-            font=('SF Pro', 11),
-            fg='#888888',
-            bg='#0a0a0a'
-        ).pack(side='left')
+        tk.Label(seg_frame, text=segment['name'], font=('SF Pro', 10), 
+                fg=self.FG_DIM, bg=self.BG).pack(side='left')
         
-        # Description entry (1-line)
+        # Entry
+        entry_frame = tk.Frame(inner, bg=self.BG_LIGHT)
+        entry_frame.pack(fill='x', padx=20, pady=(0, 10))
+        
         desc_entry = tk.Entry(
-            dialog,
-            font=('SF Pro', 11),
-            bg='#1a1a1a',
-            fg='#ffffff',
-            insertbackground='#ffffff',
-            bd=0,
-            width=40
+            entry_frame, font=('SF Pro', 11),
+            bg=self.BG_LIGHT, fg=self.FG,
+            insertbackground=self.FG, bd=0, relief='flat'
         )
-        desc_entry.pack(pady=10, padx=20, ipady=6)
-        desc_entry.focus_set()
-        desc_entry.insert(0, "Quick description...")
-        desc_entry.bind('<FocusIn>', lambda e: desc_entry.delete(0, tk.END) if desc_entry.get() == "Quick description..." else None)
+        desc_entry.pack(fill='x', ipady=6, padx=6)
+        
+        # Force focus to entry after a small delay
+        dialog.after(100, lambda: desc_entry.focus_force())
         
         def save_and_break():
-            """Save session and start break."""
-            description = desc_entry.get().strip()
-            if description == "Quick description...":
-                description = ""
+            desc = desc_entry.get().strip() or "No description"
             if self.session_start_time:
-                save_session(
-                    segment_id=segment['id'],
-                    description=description or "No description",
-                    duration_minutes=25,
-                    started_at=self.session_start_time
-                )
+                save_session(segment['id'], desc, 25, self.session_start_time)
             dialog.destroy()
             self._start_break()
             
         def save_and_skip():
-            """Save session and skip break."""
-            description = desc_entry.get().strip()
-            if description == "Quick description...":
-                description = ""
+            desc = desc_entry.get().strip() or "No description"
             if self.session_start_time:
-                save_session(
-                    segment_id=segment['id'],
-                    description=description or "No description",
-                    duration_minutes=25,
-                    started_at=self.session_start_time
-                )
+                save_session(segment['id'], desc, 25, self.session_start_time)
             dialog.destroy()
-            self._reset_timer()
+            # Start next work cycle immediately instead of just resetting
+            self._start_timer()
         
         # Buttons
-        btn_frame = tk.Frame(dialog, bg='#0a0a0a')
-        btn_frame.pack(pady=15)
+        btn_frame = tk.Frame(inner, bg=self.BG)
+        btn_frame.pack(pady=8)
         
-        tk.Button(
-            btn_frame,
-            text="Save & Break (5 min)",
-            command=save_and_break,
-            font=('SF Pro', 10),
-            bg='#2ecc71',
-            fg='#ffffff',
-            activebackground='#27ae60',
-            bd=0,
-            padx=15,
-            pady=6,
-            cursor='hand2'
-        ).pack(side='left', padx=5)
+        save_btn = tk.Label(
+            btn_frame, text="Save & Break", font=('SF Pro', 10),
+            fg=self.FG, bg='#2ecc71', padx=12, pady=4, cursor='hand2'
+        )
+        save_btn.pack(side='left', padx=4)
+        save_btn.bind('<Button-1>', lambda e: save_and_break())
+        save_btn.bind('<Enter>', lambda e: save_btn.config(bg='#27ae60'))
+        save_btn.bind('<Leave>', lambda e: save_btn.config(bg='#2ecc71'))
         
-        tk.Button(
-            btn_frame,
-            text="Skip Break",
-            command=save_and_skip,
-            font=('SF Pro', 10),
-            bg='#2a2a2a',
-            fg='#ffffff',
-            activebackground='#3a3a3a',
-            bd=0,
-            padx=15,
-            pady=6,
-            cursor='hand2'
-        ).pack(side='left', padx=5)
+        skip_btn = tk.Label(
+            btn_frame, text="Skip Break", font=('SF Pro', 10),
+            fg=self.FG, bg='#333333', padx=12, pady=4, cursor='hand2'
+        )
+        skip_btn.pack(side='left', padx=4)
+        skip_btn.bind('<Button-1>', lambda e: save_and_skip())
+        skip_btn.bind('<Enter>', lambda e: skip_btn.config(bg='#444444'))
+        skip_btn.bind('<Leave>', lambda e: skip_btn.config(bg='#333333'))
         
-        # Bind Enter key to save & break
         desc_entry.bind('<Return>', lambda e: save_and_break())
+        dialog.bind('<Escape>', lambda e: save_and_skip())
         
     def _start_break(self):
-        """Start the break timer."""
+        """Start break."""
         self.time_remaining = self.break_duration
         self.state = self.BREAK
+        self.time_label.config(fg='#3498db')  # Blue for break
         self._update_time_display()
         self.play_btn.config(text="⏸")
         
@@ -468,75 +431,71 @@ class PomodoroTimer:
         self.timer_thread.start()
         
     def _update_time_display(self):
-        """Update the timer display."""
-        minutes = self.time_remaining // 60
-        seconds = self.time_remaining % 60
-        self.time_label.config(text=f"{minutes:02d}:{seconds:02d}")
+        """Update display."""
+        mins = self.time_remaining // 60
+        secs = self.time_remaining % 60
+        self.time_label.config(text=f"{mins:02d}:{secs:02d}")
         
     def _play_notification_sound(self):
-        """Play notification sound (macOS)."""
+        """Play sound."""
         if platform.system() == 'Darwin':
             subprocess.run(['afplay', '/System/Library/Sounds/Glass.aiff'], capture_output=True)
         else:
             self.root.bell()
             
     def _notify(self, title: str, message: str):
-        """Show system notification (macOS)."""
+        """System notification."""
         if platform.system() == 'Darwin':
             script = f'display notification "{message}" with title "{title}"'
             subprocess.run(['osascript', '-e', script], capture_output=True)
             
     def _open_dashboard(self):
-        """Open the analytics dashboard in browser."""
+        """Open dashboard."""
         import webbrowser
         webbrowser.open('http://localhost:5050')
     
     def _start_drag(self, event):
-        """Start window drag."""
-        # Only allow drag if not clicking on a button
+        """Start drag."""
         widget = event.widget
-        if isinstance(widget, tk.Button) or isinstance(widget, ttk.Combobox):
+        if isinstance(widget, (ttk.Combobox,)):
+            return
+        # Don't drag if clicking on labels that are buttons
+        if isinstance(widget, tk.Label) and widget.cget('cursor') == 'hand2':
             return
         self._drag_start_x = event.x
         self._drag_start_y = event.y
         
     def _drag(self, event):
-        """Handle window drag."""
+        """Drag window."""
         if hasattr(self, '_drag_start_x'):
             x = self.root.winfo_x() + event.x - self._drag_start_x
             y = self.root.winfo_y() + event.y - self._drag_start_y
             self.root.geometry(f"+{x}+{y}")
     
     def _minimize(self):
-        """Minimize the window (hide it temporarily)."""
-        # With overrideredirect(True), standard minimize doesn't work
-        # So we'll hide the window instead
+        """Minimize."""
         self.root.withdraw()
+        self.root.after(3000, self._restore)
         
-        # Create a small restore mechanism - window will auto-restore after 3 seconds
-        # Or you can click the dock icon to restore
-        def restore():
-            self.root.deiconify()
-            self.root.lift()
-        
-        # Auto-restore after 3 seconds (you can adjust this)
-        self.root.after(3000, restore)
+    def _restore(self):
+        """Restore."""
+        self.root.deiconify()
+        self.root.lift()
     
     def _keep_on_top(self):
-        """Periodically ensure window stays on top."""
+        """Stay on top."""
         self.root.lift()
         self.root.attributes('-topmost', True)
-        # Check every 500ms
         self.root.after(500, self._keep_on_top)
     
     def _quit(self):
-        """Close the application."""
+        """Quit."""
         self.running = False
         self.root.quit()
         self.root.destroy()
         
     def run(self):
-        """Start the application."""
+        """Run."""
         self.root.mainloop()
 
 
